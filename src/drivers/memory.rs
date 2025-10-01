@@ -167,21 +167,8 @@ where
             self.remove_from_tag_index(key, &old_entry.tags);
         }
 
-        cache.put(key.to_string(), entry.clone());
-        self.update_tag_index(key, &entry.tags);
-
+        cache.put(key.to_string(), entry);
         Ok(())
-    }
-
-    async fn delete(&self, key: &str) -> CacheResult<bool> {
-        let mut cache = self.cache.write();
-
-        if let Some(entry) = cache.pop(key) {
-            self.remove_from_tag_index(key, &entry.tags);
-            Ok(true)
-        } else {
-            Ok(false)
-        }
     }
 
     async fn has(&self, key: &str) -> CacheResult<bool> {
@@ -189,6 +176,17 @@ where
 
         if let Some(entry) = cache.peek(key) {
             Ok(!entry.is_expired())
+        } else {
+            Ok(false)
+        }
+    }
+
+    async fn delete(&self, key: &str) -> CacheResult<bool> {
+        let mut cache = self.cache.write();
+        
+        if let Some(entry) = cache.pop(key) {
+            self.remove_from_tag_index(key, &entry.tags);
+            Ok(true)
         } else {
             Ok(false)
         }
@@ -232,6 +230,35 @@ where
         }
 
         Ok(deleted)
+    }
+
+    async fn get_with_grace_period(&self, key: &str, grace_period: Duration) -> CacheResult<Option<Self::Value>> {
+        // Periodic cleanup (every 100th access)
+        if fastrand::u32(0..100) == 0 {
+            self.cleanup_expired();
+        }
+
+        let mut cache = self.cache.write();
+
+        if let Some(entry) = cache.get(key) {
+            if entry.is_expired() {
+                // Check if within grace period
+                if entry.is_within_grace_period(grace_period) {
+                    // Return stale data but don't remove from cache
+                    return Ok(Some(entry.value.clone()));
+                } else {
+                    // Remove expired entry beyond grace period
+                    let entry = cache.pop(key).unwrap();
+                    self.remove_from_tag_index(key, &entry.tags);
+                    Ok(None)
+                }
+            } else {
+                // Return fresh data
+                Ok(Some(entry.value.clone()))
+            }
+        } else {
+            Ok(None)
+        }
     }
 }
 

@@ -179,6 +179,85 @@ where
         Ok(None)
     }
 
+    /// Get value from cache stack with optional grace period support
+    async fn get_from_stack_with_grace_period(&self, key: &str, grace_period: Option<Duration>) -> CacheResult<Option<T>> {
+        // If no grace period specified, use regular get
+        if grace_period.is_none() {
+            return self.get_from_stack(key).await;
+        }
+        
+        let grace = grace_period.unwrap();
+        
+        // Try L1 first with grace period
+        if let Some(l1) = &self.l1_driver {
+            match l1.get_with_grace_period(key, grace).await {
+                Ok(Some(value)) => {
+                    debug!("L1 cache hit (with grace) for key: {}", key);
+                    self.stats.write().await.l1_hits += 1;
+                    return Ok(Some(value));
+                }
+                Ok(None) => {
+                    debug!("L1 cache miss for key: {}", key);
+                    self.stats.write().await.l1_misses += 1;
+                }
+                Err(e) => {
+                    warn!("L1 cache error for key {}: {:?}", key, e);
+                    self.stats.write().await.errors += 1;
+                }
+            }
+        }
+
+        // Try L2 if L1 missed
+        if let Some(l2) = &self.l2_driver {
+            match l2.get_with_grace_period(key, grace).await {
+                Ok(Some(value)) => {
+                    debug!("L2 cache hit (with grace) for key: {}", key);
+                    self.stats.write().await.l2_hits += 1;
+
+                    // Backfill L1 cache
+                    if let Some(l1) = &self.l1_driver {
+                        if let Err(e) = l1.set(key, value.clone(), None).await {
+                            warn!("Failed to backfill L1 cache for key {}: {:?}", key, e);
+                        }
+                    }
+
+                    return Ok(Some(value));
+                }
+                Ok(None) => {
+                    debug!("L2 cache miss for key: {}", key);
+                    self.stats.write().await.l2_misses += 1;
+                }
+                Err(e) => {
+                    warn!("L2 cache error for key {}: {:?}", key, e);
+                    self.stats.write().await.errors += 1;
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Get stale data from cache if within grace period (specifically for factory failures)
+    async fn get_stale_with_grace_period(&self, key: &str, grace_period: Duration) -> CacheResult<Option<T>> {
+        // Try L1 first for stale data
+        if let Some(l1) = &self.l1_driver {
+            if let Ok(Some(value)) = l1.get_with_grace_period(key, grace_period).await {
+                debug!("Found stale L1 data within grace period for key: {}", key);
+                return Ok(Some(value));
+            }
+        }
+
+        // Try L2 for stale data
+        if let Some(l2) = &self.l2_driver {
+            if let Ok(Some(value)) = l2.get_with_grace_period(key, grace_period).await {
+                debug!("Found stale L2 data within grace period for key: {}", key);
+                return Ok(Some(value));
+            }
+        }
+
+        Ok(None)
+    }
+
     /// Set value in both L1 and L2 caches with tags
     async fn set_in_stack_with_tags(
         &self,
@@ -275,29 +354,45 @@ where
         F: FnOnce() -> Fut + Send,
         Fut: std::future::Future<Output = CacheResult<Self::Value>> + Send,
     {
-        // Try to get from cache first
+        // Try to get from cache first (but not grace period - that's for factory failures)
         if let Some(value) = self.get_from_stack(key).await? {
             return Ok(value);
         }
 
-        // Cache miss - use factory to generate value
+        // Cache miss or expired beyond grace period - try factory
         debug!("Cache miss for key: {}, calling factory", key);
 
-        let value = if let Some(timeout) = options.timeout {
+        let factory_result = if let Some(timeout) = options.timeout {
             // Use timeout for factory execution
             match tokio::time::timeout(timeout, factory()).await {
-                Ok(result) => result?,
-                Err(_) => return Err(CacheError::Timeout),
+                Ok(result) => result,
+                Err(_) => Err(CacheError::Timeout),
             }
         } else {
-            factory().await?
+            factory().await
         };
 
-        // Store in cache with tags
-        self.set_in_stack_with_tags(key, value.clone(), options.ttl, &options.tags)
-            .await?;
-
-        Ok(value)
+        match factory_result {
+            Ok(value) => {
+                // Factory succeeded - store in cache with tags
+                self.set_in_stack_with_tags(key, value.clone(), options.ttl, &options.tags)
+                    .await?;
+                Ok(value)
+            }
+            Err(factory_error) => {
+                // Factory failed - check if we can serve stale data from grace period
+                if let Some(grace_period) = options.grace_period {
+                    // Try to get stale data using grace period - this should check expired entries
+                    if let Some(stale_value) = self.get_stale_with_grace_period(key, grace_period).await? {
+                        warn!("Factory failed for key: {}, serving stale data from grace period", key);
+                        return Ok(stale_value);
+                    }
+                }
+                
+                // No grace period data available, return factory error
+                Err(factory_error)
+            }
+        }
     }
 
     async fn get(&self, key: &str) -> CacheResult<Option<Self::Value>> {
@@ -499,6 +594,8 @@ mod tests {
             tags: vec!["user".to_string(), "profile".to_string()],
             grace_period: None,
             timeout: Some(Duration::from_secs(30)),
+            refresh_threshold: None,
+            stampede_protection: false,
         };
 
         let options2 = GetOrSetOptions {
@@ -506,6 +603,8 @@ mod tests {
             tags: vec!["user".to_string(), "settings".to_string()],
             grace_period: None,
             timeout: Some(Duration::from_secs(30)),
+            refresh_threshold: None,
+            stampede_protection: false,
         };
 
         let options3 = GetOrSetOptions {
@@ -513,6 +612,8 @@ mod tests {
             tags: vec!["product".to_string()],
             grace_period: None,
             timeout: Some(Duration::from_secs(30)),
+            refresh_threshold: None,
+            stampede_protection: false,
         };
 
         // Set values using get_or_set with tags

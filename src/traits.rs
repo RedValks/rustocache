@@ -35,6 +35,36 @@ impl<T> CacheEntry<T> {
             false
         }
     }
+
+    /// Check if entry is within grace period (expired but still usable)
+    pub fn is_within_grace_period(&self, grace_period: Duration) -> bool {
+        if let Some(ttl) = self.ttl {
+            let elapsed = chrono::Utc::now().signed_duration_since(self.created_at);
+            let elapsed_std = elapsed.to_std().unwrap_or(Duration::ZERO);
+            
+            // Entry is expired but within grace period
+            elapsed_std > ttl && elapsed_std <= (ttl + grace_period)
+        } else {
+            false
+        }
+    }
+
+    /// Get time remaining until grace period expires
+    pub fn grace_period_remaining(&self, grace_period: Duration) -> Option<Duration> {
+        if let Some(ttl) = self.ttl {
+            let elapsed = chrono::Utc::now().signed_duration_since(self.created_at);
+            let elapsed_std = elapsed.to_std().unwrap_or(Duration::ZERO);
+            let grace_expiry = ttl + grace_period;
+            
+            if elapsed_std < grace_expiry {
+                Some(grace_expiry - elapsed_std)
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }
 }
 
 /// Core cache driver trait that all implementations must follow
@@ -65,6 +95,12 @@ pub trait CacheDriver: Send + Sync {
 
     /// Delete multiple keys at once
     async fn delete_many(&self, keys: &[&str]) -> CacheResult<u64>;
+
+    /// Get value with grace period support (returns value even if expired but within grace period)
+    async fn get_with_grace_period(&self, key: &str, grace_period: Duration) -> CacheResult<Option<Self::Value>> {
+        // Default implementation falls back to regular get
+        self.get(key).await
+    }
 }
 
 /// Factory function type for creating cache entries
@@ -87,18 +123,7 @@ pub struct GetOrSetOptions {
     pub stampede_protection: bool,
 }
 
-impl Default for GetOrSetOptions {
-    fn default() -> Self {
-        Self {
-            ttl: None,
-            tags: Vec::new(),
-            grace_period: None,
-            timeout: Some(Duration::from_secs(30)),
-            refresh_threshold: None,
-            stampede_protection: false,
-        }
-    }
-}
+// Remove the manual Default implementation since we have #[derive(Default)]
 
 /// High-level cache provider interface
 #[async_trait]
