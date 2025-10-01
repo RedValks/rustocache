@@ -1,0 +1,19 @@
+[build]
+# Suppress warnings during development builds
+rustflags = [
+    "-A", "dead_code",
+    "-A", "unused_variables", 
+    "-A", "unused_imports",
+    "-A", "unused_mut",
+    "-A", "deprecated"
+]
+
+[target.'cfg(all())']
+# Apply to all targets
+rustflags = [
+    "-A", "dead_code",
+    "-A", "unused_variables", 
+    "-A", "unused_imports",
+    "-A", "unused_mut",
+    "-A", "deprecated"
+]

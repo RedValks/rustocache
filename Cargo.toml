@@ -1,0 +1,91 @@
+[package]
+name = "rustocache"
+version = "0.1.0"
+edition = "2021"
+authors = ["Rustocache Contributors"]
+description = "High-performance multi-tier caching library for Rust"
+license = "MIT"
+
+[dependencies]
+
+# Async runtime
+tokio = { version = "1.0", features = ["full"] }
+async-trait = "0.1"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = { version = "2.0.1", features = ["serde"] }
+
+# Redis driver
+redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
+
+# LRU cache for memory layer
+lru = "0.16.1"
+
+# Hashing
+ahash = "0.8"
+
+# Time utilities
+chrono = { version = "0.4", features = ["serde"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# Error handling
+thiserror = "2.0.17"
+anyhow = "1.0"
+
+# Benchmarking
+criterion = { version = "0.7.0", features = ["html_reports"] }
+
+# Parking lot for faster mutexes
+parking_lot = "0.12"
+
+# Fast random number generation
+fastrand = "2.0"
+
+[dev-dependencies]
+criterion = { version = "0.7.0", features = ["html_reports"] }
+tokio-test = "0.4"
+
+[[bench]]
+name = "simple_bench"
+harness = false
+
+[[bench]]
+name = "adversarial_bench"
+harness = false
+
+[[bench]]
+name = "cache_benchmarks"
+harness = false
+
+[[bench]]
+name = "simd_benchmarks"
+harness = false
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+# Suppress common warnings during development
+# These can be re-enabled when needed for cleanup
+
+[lints.rust]
+# Suppress dead code warnings for fields that are intentionally unused
+dead_code = "allow"
+# Suppress unused variable warnings 
+unused_variables = "allow"
+# Suppress unused import warnings
+unused_imports = "allow"
+# Suppress unused mut warnings
+unused_mut = "allow"
+
+[lints.clippy]
+# Allow some clippy lints that are too noisy during development
+too_many_arguments = "allow"
+type_complexity = "allow"
