@@ -22,6 +22,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tags: vec!["user".to_string(), "profile".to_string()],
         grace_period: None,
         timeout: Some(Duration::from_secs(30)),
+        refresh_threshold: None,
+        stampede_protection: false,
     };
 
     let user_settings_options = GetOrSetOptions {
@@ -29,6 +31,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tags: vec!["user".to_string(), "settings".to_string()],
         grace_period: None,
         timeout: Some(Duration::from_secs(30)),
+        refresh_threshold: None,
+        stampede_protection: false,
     };
 
     let product_options = GetOrSetOptions {
@@ -36,6 +40,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tags: vec!["product".to_string(), "catalog".to_string()],
         grace_period: None,
         timeout: Some(Duration::from_secs(30)),
+        refresh_threshold: None,
+        stampede_protection: false,
     };
 
     let session_options = GetOrSetOptions {
@@ -43,6 +49,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tags: vec!["session".to_string(), "auth".to_string()],
         grace_period: None,
         timeout: Some(Duration::from_secs(30)),
+        refresh_threshold: None,
+        stampede_protection: false,
     };
 
     // Populate cache with tagged entries
@@ -57,7 +65,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     cache
         .get_or_set(
             "user:123:settings",
-            || async { Ok("{\"theme\": \"dark\", \"notifications\": true}".to_string()) },
+            || async { Ok("{\"theme\": \"dark\", \"notifications\": true }".to_string()) },
             user_settings_options,
         )
         .await?;
@@ -68,9 +76,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             || async { Ok("Jane Smith - Product Manager".to_string()) },
             GetOrSetOptions {
                 ttl: Some(Duration::from_secs(300)),
-                tags: vec!["user".to_string(), "profile".to_string()],
+                tags: vec!["user".to_string()],
                 grace_period: None,
                 timeout: Some(Duration::from_secs(30)),
+                refresh_threshold: None,
+                stampede_protection: false,
             },
         )
         .await?;
@@ -92,6 +102,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tags: vec!["product".to_string(), "catalog".to_string()],
                 grace_period: None,
                 timeout: Some(Duration::from_secs(30)),
+                refresh_threshold: None,
+                stampede_protection: false,
             },
         )
         .await?;

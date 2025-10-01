@@ -1,12 +1,14 @@
-use async_trait::async_trait;
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::RwLock;
-use tracing::{debug, warn};
-
 use crate::error::{CacheError, CacheResult};
 use crate::traits::{CacheDriver, CacheProvider, GetOrSetOptions};
+use async_trait::async_trait;
+use std::collections::{HashMap, HashSet};
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::{Mutex, RwLock};
+use tracing::{debug, warn};
 
 /// Multi-tier cache stack that combines L1 (memory) and L2 (distributed) caches
 #[derive(Clone)]
@@ -17,6 +19,8 @@ pub struct CacheStack<T> {
     stats: Arc<RwLock<CacheStats>>,
     /// Tag index: tag -> set of keys that have this tag
     tag_index: Arc<RwLock<HashMap<String, HashSet<String>>>>,
+    /// Stampede protection: key -> atomic flag indicating factory is running
+    ongoing_factories: Arc<Mutex<HashMap<String, Arc<AtomicBool>>>>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -64,6 +68,7 @@ where
             name,
             stats: Arc::new(RwLock::new(CacheStats::default())),
             tag_index: Arc::new(RwLock::new(HashMap::new())),
+            ongoing_factories: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -180,14 +185,18 @@ where
     }
 
     /// Get value from cache stack with optional grace period support
-    async fn get_from_stack_with_grace_period(&self, key: &str, grace_period: Option<Duration>) -> CacheResult<Option<T>> {
+    async fn get_from_stack_with_grace_period(
+        &self,
+        key: &str,
+        grace_period: Option<Duration>,
+    ) -> CacheResult<Option<T>> {
         // If no grace period specified, use regular get
         if grace_period.is_none() {
             return self.get_from_stack(key).await;
         }
-        
+
         let grace = grace_period.unwrap();
-        
+
         // Try L1 first with grace period
         if let Some(l1) = &self.l1_driver {
             match l1.get_with_grace_period(key, grace).await {
@@ -238,7 +247,11 @@ where
     }
 
     /// Get stale data from cache if within grace period (specifically for factory failures)
-    async fn get_stale_with_grace_period(&self, key: &str, grace_period: Duration) -> CacheResult<Option<T>> {
+    async fn get_stale_with_grace_period(
+        &self,
+        key: &str,
+        grace_period: Duration,
+    ) -> CacheResult<Option<T>> {
         // Try L1 first for stale data
         if let Some(l1) = &self.l1_driver {
             if let Ok(Some(value)) = l1.get_with_grace_period(key, grace_period).await {
@@ -256,6 +269,127 @@ where
         }
 
         Ok(None)
+    }
+
+    /// Get or set without stampede protection (original logic)
+    async fn get_or_set_without_stampede_protection<F, Fut>(
+        &self,
+        key: &str,
+        factory: F,
+        options: GetOrSetOptions,
+    ) -> CacheResult<T>
+    where
+        F: FnOnce() -> Fut + Send,
+        Fut: std::future::Future<Output = CacheResult<T>> + Send,
+    {
+        debug!("Cache miss for key: {}, calling factory", key);
+
+        let factory_result = if let Some(timeout) = options.timeout {
+            // Use timeout for factory execution
+            match tokio::time::timeout(timeout, factory()).await {
+                Ok(result) => result,
+                Err(_) => Err(CacheError::Timeout),
+            }
+        } else {
+            factory().await
+        };
+
+        match factory_result {
+            Ok(value) => {
+                // Factory succeeded - store in cache with tags
+                self.set_in_stack_with_tags(key, value.clone(), options.ttl, &options.tags)
+                    .await?;
+                Ok(value)
+            }
+            Err(factory_error) => {
+                // Factory failed - check if we can serve stale data from grace period
+                if let Some(grace_period) = options.grace_period {
+                    // Try to get stale data using grace period
+                    if let Some(stale_value) =
+                        self.get_stale_with_grace_period(key, grace_period).await?
+                    {
+                        warn!(
+                            "Factory failed for key: {}, serving stale data from grace period",
+                            key
+                        );
+                        return Ok(stale_value);
+                    }
+                }
+
+                // No grace period data available, return factory error
+                Err(factory_error)
+            }
+        }
+    }
+
+    /// Get or set with stampede protection (atomic flag approach - SIMPLE!)
+    async fn get_or_set_with_stampede_protection<F, Fut>(
+        &self,
+        key: &str,
+        factory: F,
+        options: GetOrSetOptions,
+    ) -> CacheResult<T>
+    where
+        F: FnOnce() -> Fut + Send,
+        Fut: std::future::Future<Output = CacheResult<T>> + Send,
+    {
+        let key_string = key.to_string();
+
+        // Try to claim the factory execution
+        let flag = {
+            let mut ongoing = self.ongoing_factories.lock().await;
+            if let Some(existing_flag) = ongoing.get(&key_string) {
+                existing_flag.clone()
+            } else {
+                // We're the first, create and register the flag
+                let flag = Arc::new(AtomicBool::new(true));
+                ongoing.insert(key_string.clone(), flag.clone());
+
+                // Drop the mutex lock BEFORE executing factory
+                drop(ongoing);
+
+                // Execute factory
+                let result = self
+                    .get_or_set_without_stampede_protection(key, factory, options)
+                    .await;
+
+                // Clean up - signal completion first, then remove from map
+                flag.store(false, Ordering::Release);
+
+                // Small delay to ensure waiters see the flag change
+                tokio::time::sleep(Duration::from_millis(1)).await;
+
+                let mut ongoing = self.ongoing_factories.lock().await;
+                ongoing.remove(&key_string);
+
+                return result;
+            }
+        };
+
+        // Another factory is running, wait for it
+        debug!(
+            "Stampede protection: waiting for ongoing factory for key: {}",
+            key
+        );
+
+        // Simple polling approach - much more reliable than notifications
+        while flag.load(Ordering::Acquire) {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+
+        // Check cache - should be populated now
+        if let Some(value) = self.get_from_stack(key).await? {
+            debug!(
+                "Stampede protection: found value in cache after waiting for key: {}",
+                key
+            );
+            return Ok(value);
+        }
+
+        // Factory failed, execute ourselves
+        debug!("Stampede protection: cache empty after waiting, executing factory ourselves for key: {}", key);
+        self.get_or_set_without_stampede_protection(key, factory, options)
+            .await
     }
 
     /// Set value in both L1 and L2 caches with tags
@@ -359,39 +493,13 @@ where
             return Ok(value);
         }
 
-        // Cache miss or expired beyond grace period - try factory
-        debug!("Cache miss for key: {}, calling factory", key);
-
-        let factory_result = if let Some(timeout) = options.timeout {
-            // Use timeout for factory execution
-            match tokio::time::timeout(timeout, factory()).await {
-                Ok(result) => result,
-                Err(_) => Err(CacheError::Timeout),
-            }
+        // Cache miss or expired - handle with stampede protection if enabled
+        if options.stampede_protection {
+            self.get_or_set_with_stampede_protection(key, factory, options)
+                .await
         } else {
-            factory().await
-        };
-
-        match factory_result {
-            Ok(value) => {
-                // Factory succeeded - store in cache with tags
-                self.set_in_stack_with_tags(key, value.clone(), options.ttl, &options.tags)
-                    .await?;
-                Ok(value)
-            }
-            Err(factory_error) => {
-                // Factory failed - check if we can serve stale data from grace period
-                if let Some(grace_period) = options.grace_period {
-                    // Try to get stale data using grace period - this should check expired entries
-                    if let Some(stale_value) = self.get_stale_with_grace_period(key, grace_period).await? {
-                        warn!("Factory failed for key: {}, serving stale data from grace period", key);
-                        return Ok(stale_value);
-                    }
-                }
-                
-                // No grace period data available, return factory error
-                Err(factory_error)
-            }
+            self.get_or_set_without_stampede_protection(key, factory, options)
+                .await
         }
     }
 

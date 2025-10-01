@@ -188,7 +188,7 @@ where
 
     async fn delete(&self, key: &str) -> CacheResult<bool> {
         let mut cache = self.cache.write();
-        
+
         if let Some(entry) = cache.pop(key) {
             self.remove_from_tag_index(key, &entry.tags);
             Ok(true)
@@ -237,7 +237,11 @@ where
         Ok(deleted)
     }
 
-    async fn get_with_grace_period(&self, key: &str, grace_period: Duration) -> CacheResult<Option<Self::Value>> {
+    async fn get_with_grace_period(
+        &self,
+        key: &str,
+        grace_period: Duration,
+    ) -> CacheResult<Option<Self::Value>> {
         // Periodic cleanup (every 100th access)
         if fastrand::u32(0..100) == 0 {
             self.cleanup_expired();

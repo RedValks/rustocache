@@ -41,7 +41,7 @@ impl<T> CacheEntry<T> {
         if let Some(ttl) = self.ttl {
             let elapsed = chrono::Utc::now().signed_duration_since(self.created_at);
             let elapsed_std = elapsed.to_std().unwrap_or(Duration::ZERO);
-            
+
             // Entry is expired but within grace period
             elapsed_std > ttl && elapsed_std <= (ttl + grace_period)
         } else {
@@ -55,7 +55,7 @@ impl<T> CacheEntry<T> {
             let elapsed = chrono::Utc::now().signed_duration_since(self.created_at);
             let elapsed_std = elapsed.to_std().unwrap_or(Duration::ZERO);
             let grace_expiry = ttl + grace_period;
-            
+
             if elapsed_std < grace_expiry {
                 Some(grace_expiry - elapsed_std)
             } else {
@@ -97,7 +97,11 @@ pub trait CacheDriver: Send + Sync {
     async fn delete_many(&self, keys: &[&str]) -> CacheResult<u64>;
 
     /// Get value with grace period support (returns value even if expired but within grace period)
-    async fn get_with_grace_period(&self, key: &str, grace_period: Duration) -> CacheResult<Option<Self::Value>> {
+    async fn get_with_grace_period(
+        &self,
+        key: &str,
+        grace_period: Duration,
+    ) -> CacheResult<Option<Self::Value>> {
         // Default implementation falls back to regular get
         self.get(key).await
     }
