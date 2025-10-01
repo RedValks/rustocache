@@ -53,15 +53,16 @@ where
         }
     }
 
-    /// Clean up expired entries
+    /// Clean up expired entries (but preserve those that might be within grace period)
     fn cleanup_expired(&self) {
         let mut cache = self.cache.write();
         let mut tag_index = self.tag_index.write();
 
+        let max_grace_period = Duration::from_secs(3600); // 1 hour max grace period
         let expired_keys: Vec<String> = cache
             .iter()
             .filter_map(|(key, entry)| {
-                if entry.is_expired() {
+                if entry.is_expired() && !entry.is_within_grace_period(max_grace_period) {
                     Some(key.clone())
                 } else {
                     None
@@ -144,9 +145,13 @@ where
 
         if let Some(entry) = cache.get(key) {
             if entry.is_expired() {
-                // Remove expired entry
-                let entry = cache.pop(key).unwrap();
-                self.remove_from_tag_index(key, &entry.tags);
+                // Check if we might need this for grace period (assume max 1 hour grace period)
+                let max_grace_period = Duration::from_secs(3600);
+                if !entry.is_within_grace_period(max_grace_period) {
+                    // Only remove if it's beyond any reasonable grace period
+                    let entry = cache.pop(key).unwrap();
+                    self.remove_from_tag_index(key, &entry.tags);
+                }
                 Ok(None)
             } else {
                 Ok(Some(entry.value.clone()))
